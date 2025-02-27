@@ -1,10 +1,11 @@
 import { APIGatewayProxyHandlerV2 } from "aws-lambda";
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBClient, GetItemCommand } from "@aws-sdk/client-dynamodb";
 import {
   DynamoDBDocumentClient,
   QueryCommand,
   QueryCommandInput,
 } from "@aws-sdk/lib-dynamodb";
+import { unmarshall } from "@aws-sdk/util-dynamodb";
 
 const ddbDocClient = createDocumentClient();
 
@@ -63,9 +64,22 @@ export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {
       };
     }
 
-    const commandOutput = await ddbDocClient.send(
-      new QueryCommand(commandInput)
-    );
+    const castResult = await ddbDocClient.send(new QueryCommand(commandInput));
+    const castMembers = castResult.Items?.map((item) => unmarshall(item)) || [];
+    const movieCommand = new GetItemCommand({
+      TableName: process.env.MOVIE_TABLE_NAME,
+      Key: { movieId: { S: movieId.toString() } },
+    });
+
+    const movieResult = await ddbDocClient.send(movieCommand);
+    const movieInfo = movieResult.Item ? unmarshall(movieResult.Item) : null;
+
+    if (!movieInfo) {
+      return {
+        statusCode: 404,
+        body: JSON.stringify({ error: "Movie not found" }),
+      };
+    }
 
     return {
       statusCode: 200,
@@ -73,7 +87,10 @@ export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        data: commandOutput.Items,
+        title: movieInfo.title,
+        genreIds: movieInfo.genreIds,
+        overview: movieInfo.overview,
+        cast: castMembers,
       }),
     };
   } catch (error: any) {
